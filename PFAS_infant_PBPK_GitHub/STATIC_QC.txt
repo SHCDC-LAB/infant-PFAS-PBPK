@@ -1,0 +1,13 @@
+01_run_main_model.R: lexical_delimiters=PASS; hardcoded_private_path=PASS
+02_four_layer_evaluation.R: lexical_delimiters=PASS; hardcoded_private_path=PASS
+03_source_attribution_sensitivity.R: lexical_delimiters=PASS; hardcoded_private_path=PASS
+
+Main-model frozen-feature checks:
+exact_365.25_day_endpoint: PASS
+weekly_reporting_grid: PASS
+mass_balance_state: PASS
+six_compounds: PASS
+S0_S1: PASS
+relative_input_path: PASS
+
+Note: an R interpreter is not installed in this execution environment, so full runtime execution was not possible here. The scripts are based on the previous frozen analysis code, with only path portability, exact endpoint, input-sheet validation, and reproducibility-record changes.
