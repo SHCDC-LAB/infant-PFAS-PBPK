@@ -1,13 +1,7 @@
-# Data
+# Data directory
 
-Participant-level cohort data are not included in this public code package.
+Place the authorized cohort input workbook here as `input-PBPK.xlsx`.
 
-Place `input-PBPK.xlsx` here before running the model. It must contain a worksheet named `Sheet1`.
+This file contains participant-level data and must not be committed to a public repository. Keep it locally, maintain the required ethics/data-governance controls, and use a private data repository if collaborators need access.
 
-Required columns:
-`BW`, `infsex`, `PFOA`, `PFNA`, `PFDA`, `PFUdA`, `PFHxS`, `PFOS`.
-
-Optional column:
-`BFpc`.
-
-External literature supplementary files may be placed in `data/external/` if their licenses permit local use. Do not redistribute copyrighted supplementary files without permission.
+Generated workbooks, figures, caches, and logs belong under `results/`, which is excluded from Git.

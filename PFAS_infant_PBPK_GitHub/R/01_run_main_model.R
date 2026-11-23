@@ -1,5 +1,11 @@
+# VERSION NOTE (2026-11-03): revised model, NOT prior frozen v1.1.
+# S1 PRIMARY ONLY; kidney perfusion exchange uses total plasma Cp (P_kd = tissue/total plasma).
+# PFNA/PFDA/PFUdA: PFOA monthly beta as an UNVALIDATED structural-homolog proxy.
+# Env PFAS_TRAJECTORY_MODE=proxy(default)|flat|half|strong changes proxy decay only.
+# Urine filtration still uses fu*Cp; unresolved PFDA/PFUdA KurineC remains NA.
+# Recompute all numerical/validation/attribution outputs before interpreting this version.
 # ============================================================
-# PFAS infant PBPK model — FINAL FREEZE v1.1
+# PFAS infant PBPK model — REVISED CANDIDATE v2 based on freeze v1.1
 # Frozen after adult renal qualification, infant numerical QC,
 # study-specific Varsi evaluation, prenatal/postnatal counterfactual,
 # exposure×Tm sensitivity, and targeted PFNA/PFHxS R_BM audit.
@@ -153,8 +159,11 @@ BASE_RESULTS_DIR <- file.path(
   "results"
 )
 
-MODEL_FREEZE_VERSION <- "PFAS_infant_PBPK_final_freeze_v1_1_GitHub"
-MODEL_FREEZE_DATE <- "2026-10-15"
+MODEL_FREEZE_VERSION <- "PFAS_infant_PBPK_S1_renal_totalplasma_v2"
+TRAJECTORY_MODE <- tolower(Sys.getenv("PFAS_TRAJECTORY_MODE", "proxy"))
+if (!TRAJECTORY_MODE %in% c("proxy", "flat", "half", "strong")) stop("Unknown PFAS_TRAJECTORY_MODE")
+if (TRAJECTORY_MODE != "proxy") MODEL_FREEZE_VERSION <- paste0(MODEL_FREEZE_VERSION, "_beta_", TRAJECTORY_MODE)
+MODEL_FREEZE_DATE <- "2026-11-03"
 
 OUTPUT_DIR <- file.path(
   BASE_RESULTS_DIR,
@@ -252,7 +261,7 @@ PLOT_DPI <- 600
 PLOT_WIDTH <- 9
 PLOT_HEIGHT <- 6.5
 
-SCENARIOS <- c("S0", "S1")
+SCENARIOS <- "S1"
 pfas_cols <- c("PFOA", "PFNA", "PFDA", "PFUdA", "PFHxS", "PFOS")
 
 # ---- output directories ----
@@ -394,12 +403,12 @@ trajectory_params <- tibble::tribble(
   ~monthly_change_mean, ~monthly_ci_low, ~monthly_ci_high, ~source_note,
   "PFOA",  TRUE,  -0.167, -0.280, -0.035, -0.120, -0.220, -0.015,
   "Blomberg 2023 Tables 3–4",
-  "PFNA",  FALSE, 0.000, NA, NA, 0.000, NA, NA,
-  "No supported longitudinal trajectory estimate in Blomberg 2023; flat scenario fallback",
-  "PFDA",  FALSE, 0.000, NA, NA, 0.000, NA, NA,
-  "No supported longitudinal trajectory estimate in Blomberg 2023; flat scenario fallback",
-  "PFUdA", FALSE, 0.000, NA, NA, 0.000, NA, NA,
-  "No supported longitudinal trajectory estimate in Blomberg 2023; flat scenario fallback",
+  "PFNA",  FALSE, 0.000, NA, NA, -0.120, -0.220, -0.015,
+  "MODEL ASSUMPTION: monthly PFOA -12% donor for PFNA (PFCA homolog); not PFNA-observed",
+  "PFDA",  FALSE, 0.000, NA, NA, -0.120, -0.220, -0.015,
+  "MODEL ASSUMPTION: monthly PFOA -12% donor for PFDA (PFCA homolog); not PFDA-observed",
+  "PFUdA", FALSE, 0.000, NA, NA, -0.120, -0.220, -0.015,
+  "MODEL ASSUMPTION: monthly PFOA -12% donor for PFUdA/PFUnDA (PFCA homolog); not PFUdA-observed",
   "PFHxS", TRUE, -0.116, -0.244, 0.033, -0.025, -0.097, 0.054,
   "Blomberg 2023 Tables 3–4",
   "PFOS",  TRUE,  0.211,  0.089, 0.347, -0.032, -0.084, 0.023,
@@ -416,6 +425,8 @@ monthly_to_beta <- function(monthly_change) {
 }
 
 trajectory_params <- trajectory_params %>%
+  mutate(trajectory_mode = TRAJECTORY_MODE, donor_compound = ifelse(supported_by_blomberg, Compound, "PFOA"),
+         proxy_assumption = !supported_by_blomberg) %>%
   mutate(
     beta_mean_day = monthly_to_beta(monthly_change_mean),
     beta_low_day = monthly_to_beta(monthly_ci_low),
@@ -859,12 +870,12 @@ model_freeze_manifest <- tibble::tribble(
   "Exposure",
   "S0",
   "Constant measured milk concentration",
-  "Frozen primary scenario.",
+  "Historical only; not simulated in revised main analysis.",
 
   "Exposure",
   "S1",
   "Literature-informed longitudinal milk trajectory",
-  "PFOA/PFHxS/PFOS use literature trend; PFNA/PFDA/PFUdA remain flat where compound-specific longitudinal evidence is unavailable.",
+  "PFOA/PFHxS/PFOS use published rates; PFNA/PFDA/PFUdA use labeled PFOA-donor PFCA proxy, with explicit proxy-rate sensitivity.",
 
   "Numerics",
   "Mass balance",
@@ -1248,11 +1259,12 @@ make_milk_function <- function(p_name, c_milk0, scenario) {
       stop("No trajectory parameter row for ", p_name)
     }
     
-    if (!isTRUE(p$supported_by_blomberg)) {
-      return(function(t_days) rep(c_milk0, length(t_days)))
-    }
-    
     beta <- as.numeric(p$beta_mean_day)
+    # Only missing-trajectory PFCA homologs vary across explicit uncertainty modes.
+    if (!isTRUE(p$supported_by_blomberg)) {
+      beta <- beta * switch(TRAJECTORY_MODE,
+        proxy = 1, flat = 0, half = 0.5, strong = 1.5)
+    }
     return(function(t_days) c_milk0 * exp(beta * t_days))
   }
   
@@ -1545,7 +1557,7 @@ pbpk_ode_unified_tmkt <- function(t, state, parameters) {
     # ----------------------------------------------------------
     dAl <- Q_li * (Cp - Cl / P_li)
     
-    dAk <- Q_kd * (Free * Cp - Ck / P_kd)
+    dAk <- Q_kd * (Cp - Ck / P_kd)
     
     dAr <- Q_re * (Cp - Cr / P_re)
     
@@ -1556,8 +1568,7 @@ pbpk_ode_unified_tmkt <- function(t, state, parameters) {
       Q_li * Cl / P_li +
       Q_kd * Ck / P_kd +
       Q_re * Cr / P_re -
-      (Q_li + Q_re) * Cp -
-      Q_kd * Free * Cp -
+      (Q_li + Q_kd + Q_re) * Cp -
       R_filtration +
       R_reabsorption +
       Ingestion
@@ -2099,7 +2110,7 @@ write_xlsx(
   path = file.path(
     OUTPUT_DIR,
     "tables",
-    "PBPK_all_S0_S1_unified_TmKt_UrinaryStorage_results.xlsx"
+    "PBPK_all_S1_unified_TmKt_UrinaryStorage_results.xlsx"
   )
 )
 
@@ -2697,7 +2708,7 @@ for (comp in pfas_cols) {
       comp,
       "_",
       gsub("C_", "", compartment),
-      "_unified_TmKt_UrinaryStorage_S0_S1"
+      "_unified_TmKt_UrinaryStorage_S1"
     )
     
     ggsave(
@@ -2813,7 +2824,7 @@ for (comp in pfas_cols) {
       "milk_trajectories",
       paste0(
         comp,
-        "_milk_unified_TmKt_UrinaryStorage_S0_S1.png"
+        "_milk_unified_TmKt_UrinaryStorage_S1.png"
       )
     ),
     p,
@@ -2829,7 +2840,7 @@ for (comp in pfas_cols) {
       "milk_trajectories",
       paste0(
         comp,
-        "_milk_unified_TmKt_UrinaryStorage_S0_S1.pdf"
+        "_milk_unified_TmKt_UrinaryStorage_S1.pdf"
       )
     ),
     p,
@@ -3105,7 +3116,7 @@ safe_write_xlsx(
 )
 
 cat("\n============================================================\n")
-cat("FINAL MODEL FREEZE COMPLETED\n")
+cat("REVISED S1 MODEL RUN COMPLETED (PENDING VALIDATION)\n")
 cat("============================================================\n")
 cat("Version: ", MODEL_FREEZE_VERSION, "\n", sep = "")
 cat("Freeze date: ", MODEL_FREEZE_DATE, "\n", sep = "")
